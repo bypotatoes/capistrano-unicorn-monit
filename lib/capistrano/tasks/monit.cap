@@ -1,7 +1,90 @@
 namespace :load do
   task :defaults do
-    set :sidekiq_monit_conf_dir, -> { '/etc/monit/conf.d' }
+    set :monit_conf_dir, -> { '/etc/monit/conf.d' }
     set :monit_bin, -> { '/usr/bin/monit' }
-    set :sidekiq_monit_default_hooks, -> { true }
+    set :unicorn_role, -> { :app }
+    set :unicorn_monit_default_hooks, -> { true }
+  end
+end
+
+namespace :deploy do
+  before :starting, :check_unicorn_monit_hooks do
+    if fetch(:unicorn_default_hooks) && fetch(:unicorn_monit_default_hooks)
+      invoke 'unicorn:monit:add_default_hooks'
+    end
+  end
+end
+
+namespace :unicorn do
+  namespace :monit do
+
+    task :add_default_hooks do
+      before 'deploy:updating',  'unicorn:monit:unmonitor'
+      after  'deploy:published', 'unicorn:monit:monitor'
+    end
+
+    desc 'Config Unicorn monit-service'
+    task :config do
+      on roles(fetch(:unicorn_role)) do |role|
+        @role = role
+        create_unicorn_monit_template
+
+        mv_command = "mv #{fetch(:tmp_dir)}/monit.conf #{fetch(:monit_conf_dir)}/#{unicorn_service_name}.conf"
+
+        # Try execute in case the deploy user doesn't have sudo to mv
+        begin
+          execute mv_command
+        rescue
+          sudo mv_command
+        end
+
+        sudo "#{fetch(:monit_bin)} reload"
+      end
+    end
+
+    desc 'Monitor Unicorn monit-service'
+    task :monitor do
+      on roles(fetch(:unicorn_role)) do
+        begin
+          sudo "#{fetch(:monit_bin)} monitor #{unicorn_service_name}"
+        rescue
+          invoke 'unicorn:monit:config'
+          sudo "#{fetch(:monit_bin)} monitor #{unicorn_service_name}"
+        end
+      end
+    end
+
+    desc 'Unmonitor Unicorn monit-service'
+    task :unmonitor do
+      on roles(fetch(:unicorn_role)) do
+        begin
+          sudo "#{fetch(:monit_bin)} unmonitor #{unicorn_service_name}"
+        rescue
+          # no worries here
+        end
+      end
+    end
+
+    %w(start stop restart).each do |command|
+      desc "#{command.capitalize} Unicorn monit-service"
+      task command.to_sym do
+        on roles(fetch(:unicorn_role)) do
+          sudo "#{fetch(:monit_bin)} start #{unicorn_service_name}"
+        end
+      end
+    end
+
+    def unicorn_service_name
+      fetch(:unicorn_service_name, 'unicorn_service')
+    end
+
+    def create_unicorn_monit_template(file_path = "#{fetch(:tmp_dir)}/monit.conf")
+      template_path = File.expand_path("../../../generators/capistrano/unicorn/monit/templates/unicorn_monit.conf.erb", __FILE__)
+
+      if File.file?(template_path)
+        erb = File.read(template_path)
+        upload! StringIO.new(ERB.new(erb).result(binding)), file_path
+      end
+    end
   end
 end

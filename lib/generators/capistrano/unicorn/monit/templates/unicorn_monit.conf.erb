@@ -1,5 +1,5 @@
 # Monit configuration for Unicorn :  <%= fetch(:application) %>
-check process unicorn
+check process <%= fetch(:unicorn_service_name) %>
   with pidfile "<%= fetch(:unicorn_pid) %>"
   start program = "/bin/su - <%= @role.user %> -c 'cd <%= current_path %> && <%= SSHKit.config.command_map[:bundle] %> exec unicorn -c <%= fetch(:unicorn_config_path) %> -E <%= fetch(:unicorn_rack_env) %> -D <%= fetch(:unicorn_options) %>'" with timeout 30 seconds
 
